@@ -53,6 +53,17 @@ type finder struct {
 	baseRefRepo ghrepo.Interface
 	prNumber    int
 	branchName  string
+	baseRepoFn   func() (ghrepo.Interface, error)
+	branchFn     func() (string, error)
+	remotesFn    func() (remotes.Remotes, error)
+	httpClient   func() (*http.Client, error)
+	branchConfig func(string) git.BranchConfig
+	pushDefault  func() (string, error)
+	progress     progressIndicator
+
+	repo       ghrepo.Interface
+	prNumber   int
+	branchName string
 }
 
 func NewFinder(factory *cmdutil.Factory) PRFinder {
@@ -69,6 +80,17 @@ func NewFinder(factory *cmdutil.Factory) PRFinder {
 		gitConfigClient: factory.GitClient,
 		remotesFn:       factory.Remotes,
 		progress:        factory.IOStreams,
+		baseRepoFn: factory.BaseRepo,
+		branchFn:   factory.Branch,
+		remotesFn:  factory.Remotes,
+		httpClient: factory.HttpClient,
+		pushDefault: func() (string, error) {
+			return factory.GitClient.Config(context.Background(), "push.default")
+		},
+		progress: factory.IOStreams,
+		branchConfig: func(s string) git.BranchConfig {
+			return factory.GitClient.ReadBranchConfig(context.Background(), s)
+		},
 	}
 }
 
@@ -349,6 +371,40 @@ func ParseFullReference(s string) (ghrepo.Interface, int, error) {
 
 	owner := m[1]
 	repo := m[2]
+	var gitRemoteRepo ghrepo.Interface
+	if branchConfig.PushRemoteURL != nil {
+		// the branch merges from a remote specified by URL
+		if r, err := ghrepo.FromURL(branchConfig.RemoteURL); err == nil {
+			gitRemoteRepo = r
+		}
+	} else if branchConfig.PushRemoteName != "" {
+		rem, _ := f.remotesFn()
+		if r, err := rem.FindByName(branchConfig.PushRemoteName); err == nil {
+			gitRemoteRepo = r
+		}
+	}
+
+	if gitRemoteRepo != nil {
+		if branchConfig.Push != "" {
+			prHeadRef = strings.TrimPrefix(branchConfig.Push, branchConfig.PushRemoteName+"/")
+		} else if pushDefault, _ := f.pushDefault(); (pushDefault == "upstream" || pushDefault == "tracking") &&
+			strings.HasPrefix(branchConfig.MergeRef, "refs/heads/") {
+			prHeadRef = strings.TrimPrefix(branchConfig.MergeRef, "refs/heads/")
+		}
+		// prepend `OWNER:` if this branch is pushed to a fork
+		// This is determined by:
+		//  - The repo having a different owner
+		//  - The repo having the same owner but a different name (private org fork)
+		// I suspect that the implementation of the second case may be broken in the face
+		// of a repo rename, where the remote hasn't been updated locally. This is a
+		// frequent issue in commands that use SmartBaseRepoFunc. It's not any worse than not
+		// supporting this case at all though.
+		sameOwner := strings.EqualFold(gitRemoteRepo.RepoOwner(), f.repo.RepoOwner())
+		sameOwnerDifferentRepoName := sameOwner && !strings.EqualFold(gitRemoteRepo.RepoName(), f.repo.RepoName())
+		if !sameOwner || sameOwnerDifferentRepoName {
+			prHeadRef = fmt.Sprintf("%s:%s", gitRemoteRepo.RepoOwner(), prHeadRef)
+		}
+	}
 
 	return ghrepo.New(owner, repo), number, nil
 }
@@ -434,6 +490,13 @@ func findForRefs(httpClient *http.Client, prRefs PRFindRefs, stateFilters, field
 		// https://github.com/cli/cli/issues/4263
 		isNotClosedOrMergedWhenHeadIsDefault := pr.State == "OPEN" || resp.Repository.DefaultBranchRef.Name != prRefs.QualifiedHeadRef()
 		if prRefs.Matches(pr.BaseRefName, pr.HeadLabel()) && isNotClosedOrMergedWhenHeadIsDefault {
+		headBranchMatches := pr.HeadLabel() == headBranch
+		baseBranchEmptyOrMatches := baseBranch == "" || pr.BaseRefName == baseBranch
+		// When the head is the default branch, it doesn't really make sense to show merged or closed PRs.
+		// https://github.com/cli/cli/issues/4263
+		isNotClosedOrMergedWhenHeadIsDefault := pr.State == "OPEN" || resp.Repository.DefaultBranchRef.Name != headBranch
+
+		if headBranchMatches && baseBranchEmptyOrMatches && isNotClosedOrMergedWhenHeadIsDefault {
 			return &pr, nil
 		}
 	}

@@ -14,6 +14,7 @@ exec gh repo create ${ORG}/${REPO} --add-readme --private
 
 # Defer repo cleanup of upstream
 defer gh repo delete --yes --accept-cascading-deletion-of-private-forks ${ORG}/${REPO}
+defer gh repo delete --yes ${ORG}/${REPO}
 exec gh repo view ${ORG}/${REPO} --json id --jq '.id'
 stdout2env REPO_ID
 
@@ -24,6 +25,10 @@ sleep 5
 # Defer repo cleanup of fork
 defer gh repo delete --yes ${ORG}/${FORK}
 
+
+# Defer repo cleanup of fork
+defer gh repo delete --yes ${ORG}/${FORK}
+sleep 1
 exec gh repo view ${ORG}/${FORK} --json id --jq '.id'
 stdout2env FORK_ID
 

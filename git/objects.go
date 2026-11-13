@@ -95,4 +95,10 @@ func WorktreeForBranch(worktrees []Worktree, branch string) *Worktree {
 		}
 	}
 	return nil
+	RemoteName     string
+	RemoteURL      *url.URL
+	MergeRef       string
+	PushRemoteURL  *url.URL
+	PushRemoteName string
+	Push           string
 }

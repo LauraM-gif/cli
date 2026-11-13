@@ -220,6 +220,15 @@ func TestFind(t *testing.T) {
 			FetchURL: originOwnerUrl,
 		},
 		Repo: ghrepo.New("ORIGINOWNER", "OTHER-REPO"),
+	type args struct {
+		baseRepoFn   func() (ghrepo.Interface, error)
+		branchFn     func() (string, error)
+		branchConfig func(string) git.BranchConfig
+		pushDefault  func() (string, error)
+		remotesFn    func() (context.Remotes, error)
+		selector     string
+		fields       []string
+		baseBranch   string
 	}
 
 	upstreamOwnerUrl, err := url.Parse("https://github.com/UPSTREAMOWNER/REPO.git")
@@ -532,6 +541,17 @@ func TestFind(t *testing.T) {
 					pushDefaultFn:       stubPushDefault(git.PushDefaultSimple, nil),
 					remotePushDefaultFn: stubRemotePushDefault("", nil),
 					pushRevisionFn:      stubPushRevision(git.RemoteTrackingRef{}, errors.New("testErr")),
+				branchConfig: func(branch string) (c git.BranchConfig) {
+					c.MergeRef = "refs/heads/blueberries"
+					c.RemoteName = "origin"
+					c.Push = "origin/blueberries"
+					return
+				},
+				remotesFn: func() (context.Remotes, error) {
+					return context.Remotes{{
+						Remote: &git.Remote{Name: "origin"},
+						Repo:   ghrepo.New("OWNER", "REPO"),
+					}}, nil
 				},
 			},
 			httpStub: func(r *httpmock.Registry) {
@@ -623,6 +643,19 @@ func TestFind(t *testing.T) {
 					pushDefaultFn:       stubPushDefault("upstream", nil),
 					remotePushDefaultFn: stubRemotePushDefault("", nil),
 					pushRevisionFn:      stubPushRevision(git.RemoteTrackingRef{}, errors.New("testErr")),
+				branchConfig: func(branch string) (c git.BranchConfig) {
+					c.MergeRef = "refs/heads/blue-upstream-berries"
+					c.RemoteName = "origin"
+					c.PushRemoteName = "origin"
+					c.Push = "origin/blue-upstream-berries"
+					return
+				},
+				pushDefault: func() (string, error) { return "upstream", nil },
+				remotesFn: func() (context.Remotes, error) {
+					return context.Remotes{{
+						Remote: &git.Remote{Name: "origin"},
+						Repo:   ghrepo.New("UPSTREAMOWNER", "REPO"),
+					}}, nil
 				},
 			},
 			httpStub: func(r *httpmock.Registry) {
@@ -650,6 +683,7 @@ func TestFind(t *testing.T) {
 			// and push.default = upstream. It should find the PR associated with the upstream repo and return
 			// origin as the base repo
 			name: "when push.default = upstream and the current branch is configured to push/pull from a different remote than the repo",
+			name: "current branch with upstream RemoteURL configuration",
 			args: args{
 				selector:   "",
 				fields:     []string{"id", "number"},
@@ -666,6 +700,15 @@ func TestFind(t *testing.T) {
 					remotePushDefaultFn: stubRemotePushDefault("", nil),
 					pushRevisionFn:      stubPushRevision(git.RemoteTrackingRef{}, errors.New("testErr")),
 				},
+				branchConfig: func(branch string) (c git.BranchConfig) {
+					u, _ := url.Parse("https://github.com/UPSTREAMOWNER/REPO")
+					c.MergeRef = "refs/heads/blue-upstream-berries"
+					c.RemoteURL = u
+					c.PushRemoteURL = u
+					return
+				},
+				pushDefault: func() (string, error) { return "upstream", nil },
+				remotesFn:   nil,
 			},
 			httpStub: func(r *httpmock.Registry) {
 				r.Register(
@@ -720,6 +763,92 @@ func TestFind(t *testing.T) {
 			},
 			wantPR:   13,
 			wantRepo: "https://github.com/ORIGINOWNER/REPO",
+		},
+		{
+			name: "current branch with tracking (deprecated synonym of upstream) configuration",
+			args: args{
+				selector: "",
+				fields:   []string{"id", "number"},
+				baseRepoFn: func() (ghrepo.Interface, error) {
+					return ghrepo.FromFullName("OWNER/REPO")
+				},
+				branchFn: func() (string, error) {
+					return "blueberries", nil
+				},
+				branchConfig: func(branch string) (c git.BranchConfig) {
+					c.MergeRef = "refs/heads/blue-upstream-berries"
+					c.RemoteName = "origin"
+					c.PushRemoteName = "origin"
+					c.Push = "origin/blue-upstream-berries"
+					return
+				},
+				pushDefault: func() (string, error) { return "tracking", nil },
+				remotesFn: func() (context.Remotes, error) {
+					return context.Remotes{{
+						Remote: &git.Remote{Name: "origin"},
+						Repo:   ghrepo.New("UPSTREAMOWNER", "REPO"),
+					}}, nil
+				},
+			},
+			httpStub: func(r *httpmock.Registry) {
+				r.Register(
+					httpmock.GraphQL(`query PullRequestForBranch\b`),
+					httpmock.StringResponse(`{"data":{"repository":{
+						"pullRequests":{"nodes":[
+							{
+								"number": 13,
+								"state": "OPEN",
+								"baseRefName": "main",
+								"headRefName": "blue-upstream-berries",
+								"isCrossRepository": true,
+								"headRepositoryOwner": {"login":"UPSTREAMOWNER"}
+							}
+						]}
+					}}}`))
+			},
+			wantPR:   13,
+			wantRepo: "https://github.com/OWNER/REPO",
+		},
+		{
+			name: "current branch with upstream and fork in same org",
+			args: args{
+				selector: "",
+				fields:   []string{"id", "number"},
+				baseRepoFn: func() (ghrepo.Interface, error) {
+					return ghrepo.FromFullName("OWNER/REPO")
+				},
+				branchFn: func() (string, error) {
+					return "blueberries", nil
+				},
+				branchConfig: func(branch string) (c git.BranchConfig) {
+					c.RemoteName = "origin"
+					return
+				},
+				remotesFn: func() (context.Remotes, error) {
+					return context.Remotes{{
+						Remote: &git.Remote{Name: "origin"},
+						Repo:   ghrepo.New("OWNER", "REPO-FORK"),
+					}}, nil
+				},
+			},
+			httpStub: func(r *httpmock.Registry) {
+				r.Register(
+					httpmock.GraphQL(`query PullRequestForBranch\b`),
+					httpmock.StringResponse(`{"data":{"repository":{
+						"pullRequests":{"nodes":[
+							{
+								"number": 13,
+								"state": "OPEN",
+								"baseRefName": "main",
+								"headRefName": "blueberries",
+								"isCrossRepository": true,
+								"headRepositoryOwner": {"login":"OWNER"}
+							}
+						]}
+					}}}`))
+			},
+			wantPR:   13,
+			wantRepo: "https://github.com/OWNER/REPO",
 		},
 		{
 			name: "current branch made by pr checkout",
@@ -883,6 +1012,11 @@ func TestFind(t *testing.T) {
 
 			if tt.args.progress != nil {
 				f.progress = tt.args.progress
+				baseRepoFn:   tt.args.baseRepoFn,
+				branchFn:     tt.args.branchFn,
+				branchConfig: tt.args.branchConfig,
+				pushDefault:  tt.args.pushDefault,
+				remotesFn:    tt.args.remotesFn,
 			}
 
 			pr, repo, err := f.Find(FindOptions{

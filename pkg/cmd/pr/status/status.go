@@ -218,6 +218,46 @@ func statusRun(opts *StatusOptions) error {
 	return nil
 }
 
+func prSelectorForCurrentBranch(gitClient *git.Client, baseRepo ghrepo.Interface, prHeadRef string, rem ghContext.Remotes) (prNumber int, selector string, err error) {
+	selector = prHeadRef
+	branchConfig := gitClient.ReadBranchConfig(context.Background(), prHeadRef)
+
+	// the branch is configured to merge a special PR head ref
+	prHeadRE := regexp.MustCompile(`^refs/pull/(\d+)/head$`)
+	if m := prHeadRE.FindStringSubmatch(branchConfig.MergeRef); m != nil {
+		prNumber, _ = strconv.Atoi(m[1])
+		return
+	}
+
+	var branchOwner string
+	if branchConfig.RemoteURL != nil {
+		// the branch merges from a remote specified by URL
+		if r, err := ghrepo.FromURL(branchConfig.RemoteURL); err == nil {
+			branchOwner = r.RepoOwner()
+		}
+	} else if branchConfig.PushRemoteName != "" {
+		// the branch merges from a remote specified by name
+		if r, err := rem.FindByName(branchConfig.PushRemoteName); err == nil {
+			branchOwner = r.RepoOwner()
+		}
+	}
+
+	if branchOwner != "" {
+		if branchConfig.Push != "" {
+			selector = strings.TrimPrefix(branchConfig.Push, branchConfig.PushRemoteName+"/")
+		} else if pushDefault, _ := gitClient.Config(context.Background(), "push.default"); (pushDefault == "upstream" || pushDefault == "tracking") &&
+			strings.HasPrefix(branchConfig.MergeRef, "refs/heads/") {
+			selector = strings.TrimPrefix(branchConfig.MergeRef, "refs/heads/")
+		}
+		// prepend `OWNER:` if this branch is pushed to a fork
+		if !strings.EqualFold(branchOwner, baseRepo.RepoOwner()) {
+			selector = fmt.Sprintf("%s:%s", branchOwner, selector)
+		}
+	}
+
+	return
+}
+
 func totalApprovals(pr *api.PullRequest) int {
 	approvals := 0
 	for _, review := range pr.LatestReviews.Nodes {

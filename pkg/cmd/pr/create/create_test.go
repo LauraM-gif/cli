@@ -616,6 +616,10 @@ func Test_createRun(t *testing.T) {
 				cs.Register("git rev-parse --symbolic-full-name feature@{push}", 0, "refs/remotes/origin/feature")
 				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 1, "")
 				cs.Register("git show-ref --verify -- HEAD refs/remotes/origin/feature", 1, "")
+				cs.Register(`git config --get-regexp.+branch\\\.feature\\\.`, 0, "")
+				cs.Register(`git config remote.pushDefault`, 1, "")
+				cs.Register(`git rev-parse --verify --quiet --abbrev-ref feature@\{push\}`, 1, "")
+				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 0, "")
 				cs.Register(`git push --set-upstream origin HEAD:refs/heads/feature`, 0, "")
 			},
 			promptStubs: func(pm *prompter.PrompterMock) {
@@ -727,6 +731,10 @@ func Test_createRun(t *testing.T) {
 				cs.Register("git rev-parse --symbolic-full-name feature@{push}", 0, "refs/remotes/origin/feature")
 				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 1, "")
 				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 1, "")
+				cs.Register(`git config --get-regexp.+branch\\\.feature\\\.`, 0, "")
+				cs.Register(`git config remote.pushDefault`, 1, "")
+				cs.Register(`git rev-parse --verify --quiet --abbrev-ref feature@\{push\}`, 1, "")
+				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 0, "")
 				cs.Register(`git push --set-upstream origin HEAD:refs/heads/feature`, 0, "")
 			},
 			promptStubs: func(pm *prompter.PrompterMock) {
@@ -775,6 +783,10 @@ func Test_createRun(t *testing.T) {
 				cs.Register("git rev-parse --symbolic-full-name feature@{push}", 0, "refs/remotes/origin/feature")
 				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 1, "")
 				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 1, "")
+				cs.Register(`git config --get-regexp.+branch\\\.feature\\\.`, 0, "")
+				cs.Register(`git config remote.pushDefault`, 1, "")
+				cs.Register(`git rev-parse --verify --quiet --abbrev-ref feature@\{push\}`, 1, "")
+				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 0, "")
 				cs.Register(`git push --set-upstream origin HEAD:refs/heads/feature`, 0, "")
 			},
 			promptStubs: func(pm *prompter.PrompterMock) {
@@ -829,6 +841,10 @@ func Test_createRun(t *testing.T) {
 				cs.Register("git config remote.pushDefault", 1, "")
 				cs.Register("git config push.default", 1, "")
 				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 1, "")
+				cs.Register(`git config --get-regexp.+branch\\\.feature\\\.`, 0, "")
+				cs.Register(`git config remote.pushDefault`, 1, "")
+				cs.Register(`git rev-parse --verify --quiet --abbrev-ref feature@\{push\}`, 1, "")
+				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 0, "")
 				cs.Register("git remote rename origin upstream", 0, "")
 				cs.Register(`git remote add origin https://github.com/monalisa/REPO.git`, 0, "")
 				cs.Register(`git push --set-upstream origin HEAD:refs/heads/feature`, 0, "")
@@ -926,6 +942,10 @@ func Test_createRun(t *testing.T) {
 		`))
 				cs.Register("git rev-parse --symbolic-full-name feature@{push}", 0, "refs/remotes/origin/my-feat2")
 				cs.Register("git show-ref --verify -- HEAD refs/remotes/origin/my-feat2", 0, heredoc.Doc(`
+		`)) // determineTrackingBranch
+				cs.Register(`git config remote.pushDefault`, 1, "")
+				cs.Register(`git rev-parse --verify --quiet --abbrev-ref feature@\{push\}`, 0, "origin/my-feat2")
+				cs.Register("git show-ref --verify", 0, heredoc.Doc(`
 			deadbeef HEAD
 			deadbeef refs/remotes/origin/my-feat2
 		`))
@@ -1113,6 +1133,10 @@ func Test_createRun(t *testing.T) {
 					httpmock.StringResponse(`{"data": {"viewer": {"login": "OWNER"} } }`))
 			},
 			cmdStubs: func(cs *run.CommandStubber) {
+				cs.Register(`git config --get-regexp.+branch\\\.feature\\\.`, 0, "")
+				cs.Register(`git config remote.pushDefault`, 1, "")
+				cs.Register(`git rev-parse --verify --quiet --abbrev-ref feature@\{push\}`, 1, "")
+				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 0, "")
 				cs.Register(`git( .+)? log( .+)? origin/master\.\.\.feature`, 0, "")
 				cs.Register("git rev-parse --symbolic-full-name feature@{push}", 0, "refs/remotes/origin/feature")
 				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 1, "")
@@ -1147,6 +1171,10 @@ func Test_createRun(t *testing.T) {
 				mockRetrieveProjects(t, reg)
 			},
 			cmdStubs: func(cs *run.CommandStubber) {
+				cs.Register(`git config --get-regexp.+branch\\\.feature\\\.`, 0, "")
+				cs.Register(`git config remote.pushDefault`, 1, "")
+				cs.Register(`git rev-parse --verify --quiet --abbrev-ref feature@\{push\}`, 1, "")
+				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 0, "")
 				cs.Register(`git( .+)? log( .+)? origin/master\.\.\.feature`, 0, "")
 				cs.Register("git rev-parse --symbolic-full-name feature@{push}", 0, "refs/remotes/origin/feature")
 				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature`, 1, "")
@@ -2665,6 +2693,63 @@ func TestRemoteGuessing(t *testing.T) {
 						Resolved: "base",
 					},
 					Repo: ghrepo.New("OWNER", "REPO"),
+func Test_determineTrackingBranch(t *testing.T) {
+	tests := []struct {
+		name     string
+		cmdStubs func(*run.CommandStubber)
+		remotes  context.Remotes
+		assert   func(ref *git.TrackingRef, t *testing.T)
+	}{
+		{
+			name: "empty",
+			cmdStubs: func(cs *run.CommandStubber) {
+				cs.Register(`git config --get-regexp.+branch\\\.feature\\\.`, 0, "")
+				cs.Register(`git config remote.pushDefault`, 1, "")
+				cs.Register(`git rev-parse --verify --quiet --abbrev-ref feature@\{push\}`, 1, "")
+				cs.Register(`git show-ref --verify -- HEAD`, 0, "abc HEAD")
+			},
+			assert: func(ref *git.TrackingRef, t *testing.T) {
+				assert.Nil(t, ref)
+			},
+		},
+		{
+			name: "no match",
+			cmdStubs: func(cs *run.CommandStubber) {
+				cs.Register(`git config --get-regexp.+branch\\\.feature\\\.`, 0, "")
+				cs.Register(`git config remote.pushDefault`, 1, "")
+				cs.Register(`git rev-parse --verify --quiet --abbrev-ref feature@\{push\}`, 1, "")
+				cs.Register("git show-ref --verify -- HEAD refs/remotes/origin/feature refs/remotes/upstream/feature", 0, "abc HEAD\nbca refs/remotes/origin/feature")
+			},
+			remotes: context.Remotes{
+				&context.Remote{
+					Remote: &git.Remote{Name: "origin"},
+					Repo:   ghrepo.New("hubot", "Spoon-Knife"),
+				},
+				&context.Remote{
+					Remote: &git.Remote{Name: "upstream"},
+					Repo:   ghrepo.New("octocat", "Spoon-Knife"),
+				},
+			},
+			assert: func(ref *git.TrackingRef, t *testing.T) {
+				assert.Nil(t, ref)
+			},
+		},
+		{
+			name: "match",
+			cmdStubs: func(cs *run.CommandStubber) {
+				cs.Register(`git config --get-regexp.+branch\\\.feature\\\.`, 0, "")
+				cs.Register(`git config remote.pushDefault`, 1, "")
+				cs.Register(`git rev-parse --verify --quiet --abbrev-ref feature@\{push\}`, 0, "origin/feature")
+				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/feature refs/remotes/upstream/feature$`, 0, heredoc.Doc(`
+		deadbeef HEAD
+		deadb00f refs/remotes/origin/feature
+		deadbeef refs/remotes/upstream/feature
+	`))
+			},
+			remotes: context.Remotes{
+				&context.Remote{
+					Remote: &git.Remote{Name: "origin"},
+					Repo:   ghrepo.New("hubot", "Spoon-Knife"),
 				},
 				{
 					Remote: &git.Remote{
@@ -2740,6 +2825,24 @@ func TestNoRepoCanBeDetermined(t *testing.T) {
 						Resolved: "base",
 					},
 					Repo: ghrepo.New("OWNER", "REPO"),
+		{
+			name: "respect tracking config",
+			cmdStubs: func(cs *run.CommandStubber) {
+				cs.Register(`git config --get-regexp.+branch\\\.feature\\\.`, 0, heredoc.Doc(`
+		branch.feature.remote origin
+		branch.feature.merge refs/heads/great-feat
+	`))
+				cs.Register(`git config remote.pushDefault`, 1, "")
+				cs.Register(`git rev-parse --verify --quiet --abbrev-ref feature@\{push\}`, 0, "origin/great-feat")
+				cs.Register(`git show-ref --verify -- HEAD refs/remotes/origin/great-feat refs/remotes/origin/feature$`, 0, heredoc.Doc(`
+		deadbeef HEAD
+		deadb00f refs/remotes/origin/feature
+	`))
+			},
+			remotes: context.Remotes{
+				&context.Remote{
+					Remote: &git.Remote{Name: "origin"},
+					Repo:   ghrepo.New("hubot", "Spoon-Knife"),
 				},
 			}, nil
 		},

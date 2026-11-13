@@ -439,6 +439,7 @@ func (c *Client) lookupCommit(ctx context.Context, sha, format string) ([]byte, 
 func (c *Client) ReadBranchConfig(ctx context.Context, branch string) (BranchConfig, error) {
 	prefix := regexp.QuoteMeta(fmt.Sprintf("branch.%s.", branch))
 	args := []string{"config", "--get-regexp", fmt.Sprintf("^%s(remote|merge|pushremote|%s)$", prefix, MergeBaseConfig)}
+	args := []string{"config", "--get-regexp", fmt.Sprintf("^%s(remote|merge|pushremote)$", prefix)}
 	cmd, err := c.Command(ctx, args...)
 	if err != nil {
 		return BranchConfig{}, err
@@ -473,6 +474,9 @@ func parseBranchConfig(branchConfigLines []string) BranchConfig {
 			cfg.RemoteURL, cfg.RemoteName = parseRemoteURLOrName(parts[1])
 		case "pushremote":
 			cfg.PushRemoteURL, cfg.PushRemoteName = parseRemoteURLOrName(parts[1])
+			parseRemoteURLOrName(parts[1], &cfg.RemoteURL, &cfg.RemoteName)
+		case "pushremote":
+			parseRemoteURLOrName(parts[1], &cfg.PushRemoteURL, &cfg.PushRemoteName)
 		case "merge":
 			cfg.MergeRef = parts[1]
 		case MergeBaseConfig:
@@ -647,6 +651,17 @@ func parsePushRevision(revParseOut []byte) (RemoteTrackingRef, error) {
 	}
 
 	return ref, nil
+	if cfg.PushRemoteURL == nil && cfg.PushRemoteName == "" {
+		if conf, err := c.Config(ctx, "remote.pushDefault"); err == nil && conf != "" {
+			parseRemoteURLOrName(conf, &cfg.PushRemoteURL, &cfg.PushRemoteName)
+		} else {
+			cfg.PushRemoteName = cfg.RemoteName
+		}
+	}
+	if out, err = c.revParse(ctx, "--verify", "--quiet", "--abbrev-ref", branch+"@{push}"); err == nil {
+		cfg.Push = strings.TrimSuffix(string(out), "\n")
+	}
+	return
 }
 
 func (c *Client) DeleteLocalTag(ctx context.Context, tag string) error {
@@ -1044,6 +1059,14 @@ func parseRemoteURLOrName(value string) (*url.URL, string) {
 		return nil, value
 	}
 	return nil, ""
+func parseRemoteURLOrName(value string, remoteURL **url.URL, remoteName *string) {
+	if strings.Contains(value, ":") {
+		if u, err := ParseURL(value); err == nil {
+			*remoteURL = u
+		}
+	} else if !isFilesystemPath(value) {
+		*remoteName = value
+	}
 }
 
 func populateResolvedRemotes(remotes RemoteSet, resolved []string) {
